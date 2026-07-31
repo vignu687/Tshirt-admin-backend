@@ -85,15 +85,116 @@ func (h *ProductHandler) GetAllProducts(c echo.Context) error {
 }
 
 // GET /api/products/updateProduct/:id (Protected)
-//
-//	func (h *ProductHandler) UpdateProduct(c echo.Context) error{
-//		idParam := c.Param("id")
-//		productID, err := strconv.ParseUint(idParam, 10, 32)
-//		if err != nil {
-//			return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid product ID format"})
-//		}
-//	}
-//
+func (h *ProductHandler) UpdateProduct(c echo.Context) error {
+	idParam := c.Param("id")
+	productID, err := strconv.ParseUint(idParam, 10, 32)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid product ID format"})
+	}
+	var existingProduct models.Product
+	if err := h.DB.Preload("Sizes").First(&existingProduct, productID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "Product not found"})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Database lookup failed"})
+	}
+
+	dto := new(models.UpdateProductDTO)
+	if err := c.Bind(dto); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid payload format"})
+	}
+
+	// Basic validation
+	// if dto.Name == "" || dto.ProductCode == "" || dto.SKU == "" || dto.CategoryID == 0 {
+	// 	return c.JSON(http.StatusBadRequest, map[string]string{"error": "Name, ProductCode, SKU, and CategoryID are strictly required"})
+	// }
+	updates := make(map[string]interface{})
+
+	if dto.Name != "" {
+		updates["name"] = dto.Name
+	}
+	if dto.Brand != "" {
+		updates["brand"] = dto.Brand
+	}
+	if dto.Description != "" {
+		updates["description"] = dto.Description
+	}
+	if dto.ProductCode != "" {
+		updates["product_code"] = dto.ProductCode
+	}
+	if dto.SKU != "" {
+		updates["sku"] = dto.SKU
+	}
+	mrp := existingProduct.MRP
+	sellingPrice := existingProduct.SellingPrice
+	if dto.MRP > 0 {
+		mrp = dto.MRP
+		updates["mrp"] = dto.MRP
+	}
+	if dto.SellingPrice > 0 {
+		sellingPrice = dto.SellingPrice
+		updates["selling_price"] = dto.SellingPrice
+	}
+
+	if mrp > 0 && sellingPrice < mrp {
+		updates["discount"] = int(((mrp - sellingPrice) / mrp) * 100)
+	}
+	// Convert updated images slice to JSON string if provided
+	if len(dto.Images) > 0 {
+		imagesJSON, _ := json.Marshal(dto.Images)
+		updates["images"] = string(imagesJSON)
+	}
+
+	// Convert updated specifications map to JSON string if provided
+	if len(dto.Specifications) > 0 {
+		specsJSON, _ := json.Marshal(dto.Specifications)
+		updates["specifications"] = string(specsJSON)
+	}
+	// 4. Begin DB Transaction for Atomic Update
+	tx := h.DB.Begin()
+	// A. Execute SQL UPDATE on the primary products row
+	if len(updates) > 0 {
+		if err := tx.Model(&existingProduct).Updates(updates).Error; err != nil {
+			tx.Rollback()
+			log.Printf("🚨 [PRODUCT-HANDLER] DB Update error: %v", err)
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to update product attributes"})
+		}
+	}
+	if len(dto.Sizes) > 0 {
+		// Permanently clear existing size variants for this product
+		if err := tx.Unscoped().Where("product_id = ?", productID).Delete(&models.ProductSize{}).Error; err != nil {
+			tx.Rollback()
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to refresh size variants"})
+		}
+
+		// Insert fresh size records with updated stock numbers
+		var newSizes []models.ProductSize
+		for _, sizeDTO := range dto.Sizes {
+			newSizes = append(newSizes, models.ProductSize{
+				ProductID: uint(productID),
+				Size:      sizeDTO.Size,
+				Stock:     sizeDTO.Stock,
+			})
+		}
+
+		if err := tx.Create(&newSizes).Error; err != nil {
+			tx.Rollback()
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to create updated size variants"})
+		}
+	}
+
+	// Commit Transaction
+	tx.Commit()
+
+	// 5. Fetch and return the freshly updated product record
+	var updatedProduct models.Product
+	h.DB.Preload("Category").Preload("Sizes").First(&updatedProduct, productID)
+
+	log.Printf("✏️ [PRODUCT-HANDLER] Product ID #%d ('%s') successfully updated in DB", productID, updatedProduct.Name)
+	return c.JSON(http.StatusOK, updatedProduct)
+
+}
+
 // DELETE /api/products/deleteProduct/:id (Protected)
 func (h *ProductHandler) DeleteProduct(c echo.Context) error {
 	idParam := c.Param("id")

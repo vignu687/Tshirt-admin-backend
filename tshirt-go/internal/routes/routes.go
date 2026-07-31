@@ -62,6 +62,7 @@ func SetupRoutes(
 
 		// 🔒 Protected: Requires a valid Bearer token signature
 		productGroup.POST("/createProduct", productHandler.CreateProduct, authRequired)
+		productGroup.PUT("/updateProduct/:id", productHandler.UpdateProduct, authRequired)
 		productGroup.DELETE("/deleteProduct/:id", productHandler.DeleteProduct, authRequired)
 	}
 

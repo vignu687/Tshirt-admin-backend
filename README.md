@@ -1,4 +1,4 @@
-# 👕 T-Shirt Store Admin Backend
+# 👕 FitStore-engine (Admin-backend)
 
 A lightweight administrative backend engine built with **Go (Golang)**, the **Echo web framework**, and **GORM ORM** using a **PostgreSQL** database.
 

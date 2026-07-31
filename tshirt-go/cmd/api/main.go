@@ -34,6 +34,21 @@ func main() {
 	log.Println("🤖 [ROUTER] Assembling Echo framework engine...")
 	e := echo.New()
 
+	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins: []string{
+			cfg.FrontendURL,
+		},
+		AllowHeaders: []string{
+			echo.HeaderOrigin,
+			echo.HeaderContentType,
+			echo.HeaderAccept,
+			echo.HeaderAuthorization,
+		},
+		AllowMethods: []string{
+			echo.GET, echo.POST, echo.PUT, echo.PATCH, echo.DELETE, echo.OPTIONS,
+		},
+	}))
+
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 	log.Println("🛡️  [ROUTER] Global system middleware layers attached.")
